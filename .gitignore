@@ -8,3 +8,4 @@ backend/data/processed/*
 .ipynb_checkpoints/
 *.log
 .env
+backend/data/processed/*.pkl
