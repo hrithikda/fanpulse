@@ -71,6 +71,52 @@ def preprocess(df):
 
     return df, scalers
 
+def transform_with_scalers(df, scalers):
+    """Apply previously-fit scalers/adstock normalization to a new frame.
+
+    Used for time-based holdout validation: the test set must be transformed
+    with the scalers learned on the training set to avoid leakage.
+    """
+    df = df.copy()
+    df = df.sort_values(['team', 'season', 'date']).reset_index(drop=True)
+    df = df.dropna(subset=['attendance'])
+    df['log_attendance'] = np.log(df['attendance'])
+
+    for col in ['home_win_pct_20g', 'run_diff_10g', 'win_streak',
+                'days_since_last_home', 'season_progress', 'game_number']:
+        mn, mx = scalers[col]
+        df[col + '_scaled'] = (df[col] - mn) / (mx - mn + 1e-8)
+
+    df['day_of_week_scaled'] = df['day_of_week'] / 6.0
+
+    for m in range(4, 11):
+        df[f'month_{m}'] = (df['month'] == m).astype(float)
+
+    adstocked_channels = {ch: [] for ch in CHANNELS}
+    for (team, season), grp in df.groupby(['team', 'season']):
+        idx = grp.index
+        for ch in CHANNELS:
+            p = CHANNEL_PRIORS[ch]
+            transformed = apply_adstock_saturation(
+                grp[f'spend_{ch}'].values,
+                decay=p['decay_mu'],
+                alpha=p['alpha_mu'],
+                gamma=p['gamma_mu']
+            )
+            adstocked_channels[ch].extend(list(zip(idx, transformed)))
+
+    for ch in CHANNELS:
+        mapping = dict(adstocked_channels[ch])
+        df[f'{ch}_transformed'] = df.index.map(mapping)
+
+    for ch in CHANNELS:
+        col = f'{ch}_transformed'
+        mn, mx = scalers[f'{ch}_transformed']
+        df[col] = (df[col] - mn) / (mx - mn + 1e-8)
+
+    return df
+
+
 def build_model(df):
     y = df['log_attendance'].values
     n = len(y)

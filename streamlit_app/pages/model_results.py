@@ -109,3 +109,67 @@ st.dataframe(pd.DataFrame(roi_data), use_container_width=True, hide_index=True)
 st.markdown("### R-hat Convergence Diagnostics")
 summary = az.summary(trace, var_names=list(params.values()) + [f'beta_{ch}' for ch in channels])
 st.dataframe(summary[['mean', 'sd', 'r_hat', 'ess_bulk']].round(3), use_container_width=True)
+
+
+@st.cache_resource
+def load_bayesian_trace():
+    try:
+        with open('backend/data/processed/mmm_trace_bayesian.pkl', 'rb') as f:
+            return pickle.load(f)
+    except FileNotFoundError:
+        return None
+
+
+st.markdown("---")
+st.markdown("### Learned Adstock & Saturation (fully Bayesian)")
+bayes = load_bayesian_trace()
+if bayes is None:
+    st.info(
+        "The baseline model applies adstock/saturation with fixed transform "
+        "parameters. A fully Bayesian variant in `backend/models/mmm_bayesian.py` "
+        "instead *learns* per-channel `decay`, `alpha`, and `gamma` jointly with "
+        "the rest of the model (reset-aware adstock via `pytensor.scan`). "
+        "Generate its posteriors with `python -m backend.models.mmm_bayesian` to "
+        "populate this section."
+    )
+else:
+    st.caption(
+        "Posterior distributions for the adstock decay, Hill steepness (alpha), and "
+        "half-saturation point (gamma), learned per channel rather than fixed."
+    )
+    transform_params = [
+        ("Adstock decay", "decay", "carry-over rate (higher = longer memory)"),
+        ("Hill alpha", "alpha", "saturation steepness"),
+        ("Hill gamma", "gamma", "half-saturation point"),
+    ]
+    for title, prefix, desc in transform_params:
+        st.markdown(f"**{title}** — {desc}")
+        fig, axes = plt.subplots(1, 4, figsize=(14, 2.8))
+        for i, (ch, label) in enumerate(zip(channels, channel_labels)):
+            s = bayes.posterior[f'{prefix}_{ch}'].values.flatten()
+            axes[i].hist(s, bins=40, color='#4CAF50', alpha=0.8, edgecolor='white')
+            axes[i].axvline(s.mean(), color='red', linewidth=1.5,
+                            label=f'mean={s.mean():.2f}')
+            axes[i].set_title(label, fontsize=10)
+            axes[i].legend(fontsize=7)
+            sns.despine(ax=axes[i])
+        plt.tight_layout()
+        st.pyplot(fig)
+        plt.close()
+
+    st.markdown("**Learned response curves** (adstock + saturation at posterior mean)")
+    x = np.linspace(0, 1, 100)
+    fig, ax = plt.subplots(figsize=(10, 4))
+    colors = ['#2196F3', '#4CAF50', '#FF9800', '#9C27B0']
+    for (ch, label), color in zip(zip(channels, channel_labels), colors):
+        a = bayes.posterior[f'alpha_{ch}'].values.mean()
+        g = bayes.posterior[f'gamma_{ch}'].values.mean()
+        sat = x ** a / (x ** a + g ** a)
+        ax.plot(x, sat, label=label, color=color, linewidth=2)
+    ax.set_xlabel("Normalized adstocked spend")
+    ax.set_ylabel("Saturated response")
+    ax.set_title("Learned Hill saturation curves by channel")
+    ax.legend()
+    sns.despine()
+    st.pyplot(fig)
+    plt.close()

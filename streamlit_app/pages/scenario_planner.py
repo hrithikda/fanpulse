@@ -4,10 +4,17 @@ import numpy as np
 import matplotlib.pyplot as plt
 import seaborn as sns
 import pickle
+from scipy.optimize import minimize
 
 st.set_page_config(page_title="Scenario Planner — FanPulse", layout="wide")
 st.title("Budget Scenario Planner")
 st.caption("Reallocate marketing spend across channels and see projected attendance impact.")
+
+st.warning(
+    "Spend levels, channel ROI, and the budget figures below are **synthetic** proxies "
+    "for demonstrating MMM-driven budget planning — not real MLB marketing data. "
+    "See the Methodology page."
+)
 
 AVG_ATTENDANCE = 26572
 TICKET_PRICE = 35
@@ -40,6 +47,25 @@ CHANNEL_DECAY = {
     'Email': 0.2,
     'Broadcast': 0.7,
     'Out-of-Home': 0.5,
+}
+
+# saturation scale (as a fraction of total budget) controlling diminishing
+# returns: small scale = saturates quickly (a little spend goes a long way but
+# extra dollars do little), large scale = lots of headroom before saturating.
+CHANNEL_SAT_SCALE = {
+    'Paid Social': 0.35,
+    'Email': 0.12,
+    'Broadcast': 0.45,
+    'Out-of-Home': 0.30,
+}
+
+# slider bounds (%) — optimizer respects the same ranges so its result can
+# pre-fill the sliders cleanly
+CHANNEL_BOUNDS = {
+    'Paid Social': (0, 80),
+    'Email': (0, 30),
+    'Broadcast': (0, 80),
+    'Out-of-Home': (0, 60),
 }
 
 @st.cache_resource
@@ -80,6 +106,45 @@ def compute_marginal_roi(split):
         })
     return pd.DataFrame(rows)
 
+
+CHANNELS_ORDER = ['Paid Social', 'Email', 'Broadcast', 'Out-of-Home']
+
+
+def saturated_response(weights):
+    """Total attendance response under diminishing returns.
+
+    Unlike ``compute_attendance_lift`` (which is linear in spend and therefore
+    always favors a single channel), this applies an exponential saturation per
+    channel so that the optimizer finds a balanced interior allocation.
+    """
+    total = 0.0
+    for ch, w in zip(CHANNELS_ORDER, weights):
+        efficiency = CHANNEL_BETA[ch] * CHANNEL_ROI[ch]
+        k = CHANNEL_SAT_SCALE[ch]
+        total += efficiency * (1.0 - np.exp(-w / k))
+    return total
+
+
+def optimize_allocation():
+    """Maximize saturated response s.t. weights sum to 1 and per-channel bounds."""
+    bounds = [(lo / 100.0, hi / 100.0) for lo, hi in
+              (CHANNEL_BOUNDS[ch] for ch in CHANNELS_ORDER)]
+    constraints = [{'type': 'eq', 'fun': lambda w: np.sum(w) - 1.0}]
+    x0 = np.array([BASELINE_SPLIT[ch] for ch in CHANNELS_ORDER])
+
+    result = minimize(
+        lambda w: -saturated_response(w),
+        x0,
+        method='SLSQP',
+        bounds=bounds,
+        constraints=constraints,
+        options={'ftol': 1e-9, 'maxiter': 500},
+    )
+    w = np.clip(result.x, 0, None)
+    w = w / w.sum()
+    return {ch: float(w[i]) for i, ch in enumerate(CHANNELS_ORDER)}
+
+
 st.markdown("### Baseline Budget Allocation")
 st.caption(f"Total seasonal marketing budget: ${BASELINE_BUDGET:,}")
 
@@ -103,18 +168,51 @@ with col2:
     baseline_df = compute_marginal_roi(BASELINE_SPLIT)
     st.dataframe(baseline_df, use_container_width=True, hide_index=True)
 
+st.markdown("### Optimize Allocation")
+st.caption(
+    "Solve for the budget split that maximizes projected attendance under "
+    "diminishing returns (Hill-style saturation per channel), subject to the "
+    "budget summing to 100% and per-channel caps."
+)
+
+SLIDER_DEFAULTS = {'sl_social': 25, 'sl_email': 5, 'sl_broadcast': 45, 'sl_ooh': 25}
+for key, val in SLIDER_DEFAULTS.items():
+    if key not in st.session_state:
+        st.session_state[key] = val
+
+opt_col1, opt_col2 = st.columns([1, 3])
+with opt_col1:
+    run_opt = st.button("Find optimal allocation", type="primary")
+if run_opt:
+    optimal = optimize_allocation()
+    st.session_state['sl_social'] = int(round(optimal['Paid Social'] * 100))
+    st.session_state['sl_email'] = int(round(optimal['Email'] * 100))
+    st.session_state['sl_broadcast'] = int(round(optimal['Broadcast'] * 100))
+    st.session_state['sl_ooh'] = int(round(optimal['Out-of-Home'] * 100))
+    # nudge to ensure the rounded integers still sum to 100
+    drift = 100 - sum(st.session_state[k] for k in SLIDER_DEFAULTS)
+    st.session_state['sl_broadcast'] = max(0, st.session_state['sl_broadcast'] + drift)
+    st.session_state['_optimized'] = True
+    st.rerun()
+
+if st.session_state.get('_optimized'):
+    st.success(
+        "Sliders below are set to the optimizer's recommended allocation. "
+        "Adjust them to explore around the optimum."
+    )
+
 st.markdown("### Adjust Budget Allocation")
 st.caption("Sliders must sum to 100%. Adjust and click Calculate.")
 
 col1, col2, col3, col4 = st.columns(4)
 with col1:
-    s_social = st.slider("Paid Social (%)", 0, 80, 25, step=1)
+    s_social = st.slider("Paid Social (%)", 0, 80, step=1, key='sl_social')
 with col2:
-    s_email = st.slider("Email (%)", 0, 30, 5, step=1)
+    s_email = st.slider("Email (%)", 0, 30, step=1, key='sl_email')
 with col3:
-    s_broadcast = st.slider("Broadcast (%)", 0, 80, 45, step=1)
+    s_broadcast = st.slider("Broadcast (%)", 0, 80, step=1, key='sl_broadcast')
 with col4:
-    s_ooh = st.slider("Out-of-Home (%)", 0, 60, 25, step=1)
+    s_ooh = st.slider("Out-of-Home (%)", 0, 60, step=1, key='sl_ooh')
 
 total = s_social + s_email + s_broadcast + s_ooh
 

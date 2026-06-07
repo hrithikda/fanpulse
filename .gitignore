@@ -1,11 +1,19 @@
 __pycache__/
 *.py[cod]
-*.pkl
-*.nc
 .DS_Store
-backend/data/raw/*
-backend/data/processed/*
 .ipynb_checkpoints/
 *.log
 .env
-backend/data/processed/*.pkl
+
+# pytensor compile cache
+.pytensor_cache/
+
+# raw scraped data (regenerated via data_loader.py)
+backend/data/raw/
+
+# the fully-Bayesian adstock trace is large + optional; regenerate via
+# python -m backend.models.mmm_bayesian
+backend/data/processed/mmm_trace_bayesian.pkl
+
+# NOTE: the processed dataset, fitted trace, scalers, and validation metrics
+# ARE committed so the Streamlit dashboard runs immediately on clone.
