@@ -7,6 +7,15 @@
 
 ---
 
+> **Data note:** Attendance and game results are real (Baseball Reference).
+> Marketing spend, channel ROI, and promotional-night flags are **synthetic**
+> proxies generated to demonstrate MMM methodology — they are not measured MLB
+> marketing data. Findings below are split accordingly: game-factor and
+> team-performance effects are estimated against real attendance, while
+> channel-level results are illustrative.
+
+---
+
 ## Business Question
 
 What actually drives MLB game attendance, and how should a team allocate its
@@ -17,117 +26,130 @@ seasonal marketing budget to maximize gate revenue?
 ## Methodology
 
 A Bayesian Marketing Mix Model was fit to game-level attendance data pulled
-from Baseball Reference via pybaseball. The model decomposes attendance into
-three layers:
+from Baseball Reference via pybaseball. The model decomposes log-attendance
+into three layers:
 
-**Game factors** — binary and continuous covariates capturing the game context:
+**Game factors** — binary and continuous covariates capturing game context:
 opening day, rival matchups, promotional nights, playoff race intensity, day of
 week, and holiday weeks.
 
 **Team performance** — rolling 20-game win percentage, 10-game run differential,
 and current win/loss streak, all lagged to avoid data leakage.
 
-**Marketing channels** — four hypothetical spend channels (paid social, email,
-broadcast, out-of-home) transformed through geometrik (carry-over decay)
+**Marketing channels** — four synthetic spend channels (paid social, email,
+broadcast, out-of-home) transformed through geometric adstock (carry-over decay)
 and Hill saturation curves (diminishing returns) before entering the model.
 
 All parameters were estimated using NUTS sampling in PyMC (2 chains, 1,000
-draws each after 2,000 tuning steps). The model achieved 0 divergences and
-max R-hat of 1.005, indicating clean convergence.
+draws each after 2,000 tuning steps). The production model achieved 0
+divergences and max R-hat of 1.005, indicating clean convergence. A fully
+Bayesian variant additionally learns the per-channel adstock/saturation
+parameters rather than fixing them.
 
 ---
 
-## Key Findings
+## Key Findings (estimated against real attendance)
 
 ### 1. Opening Day is the single strongest attendance driver
 
-The model estimates a posterior mean coefficient of 0.427 on log-attendance,
-translating to a **+42.7% attendance premium** over an average home game.
-At mean attendance of 26,572, that is roughly 11,300 additional fans. Marketing
-investment concentrated in the two weeks before Opening Day has an outsized
-return relative to any other single game.
+The model estimates a posterior mean coefficient of **0.427** on log-attendance,
+which is roughly a **+53% lift** on the natural scale relative to an average home
+game. Marketing investment concentrated around Opening Day has an outsized return
+relative to any other single game.
 
-### 2. Team quality compounds across a season
+### 2. Market size sets the ceiling
 
-Rolling 20-game win percentage carries a coefficient of 0.257, meaning a team
-that improves from a .400 winning pace to a .600 pace can expect roughly
-**+2,600 additional fans per home game** on average. This effect is persistent
-and cumulative — winning in May fills seats in June.
+The market-size coefficient (**0.366**, ≈ **+44%** natural scale) is the largest
+structural effect — stadium capacity, city population, and regional fan base
+dominate any single marketing lever. Marketing is most efficiently spent on
+marginal fans within an already-engaged base rather than fighting structural
+limits.
 
-### 3. Playoff race intensity drives a September surge
+### 3. Team quality compounds across a season
 
-Games played when a team is in contention (within 5 games of a playoff spot
-in September) show a **+11.3% attendance lift**. This is the second largest
-game-factor effect after Opening Day and suggests that September marketing
-budgets should be held in reserve and deployed contingent on playoff position.
+Rolling 20-game win percentage carries a coefficient of **0.257**. Sustained
+winning meaningfully lifts attendance over the back half of a season — winning in
+May fills seats in June. The effect is persistent and cumulative.
 
-### 4. Market size explains more variance than any single marketing channel
+### 4. Playoff-race games drive a September surge
 
-The market size coefficient (0.366) dwarfs individual channel betas, confirming
-that structural factors — stadium capacity, city population, regional fan base —
-set a ceiling that marketing cannot overcome on its own. Marketing dollars are
-most efficiently spent on marginal fans within an already-engaged base.
+September/October contention games show a coefficient of **0.113** (≈ **+12%**
+lift). This suggests September marketing budget is best held in reserve and
+deployed contingent on playoff position.
 
-### 5. Email delivers the highest ROI despite the smallest budget allocation
+### 5. Some "intuitive" effects are weak or absent in the data
 
-At an estimated $7.80 return per $1 spent, email outperforms every other
-channel on a marginal basis. The current baseline allocation gives email only
-5% of the budget ($105K/season). Doubling the email allocation to 10% while
-trimming broadcast by 5 points projects a net positive attendance impact at
-significantly lost.
-
-### 6. Broadcast has the longest carry-over but the lowest marginal return
-
-The broadcast adstock decay parameter of 0.7 means a TV campaign runs for
-roughly 6-8 weeks in the audience's memory — the longest of any channel.
-However, the marginal fan impact per $1K of spend is the lowest (0.2 fans/$1K
-vs 1.9 for paid social). Broadcast is best used for broad awareness at season
-launch, not for driving incremental attendance game-by-game.
+Rival matchups show only a small effect (coefficient ≈ 0.03), and the
+(synthetic) promo-night flag shows essentially no positive effect — an honest
+artifact of the promo schedule being randomly generated rather than reflecting
+real giveaway calendars. This is a useful reminder that a covariate only carries
+signal if the underlying data does.
 
 ---
 
-## Budget Reallocation Recommendation
+## Illustrative Channel Findings (synthetic spend — methodology demo)
 
-The baseline allocation (45% broadcast, 25% paid social, 25% OOH, 5% email)
-over-weights the lowest-ROI channel. A reallocation scenario shifting 18% of
-broadcast spend toward email and paid social projects:
+> These results rest on synthetic spend data and demonstrate how an MMM would
+> quantify channel performance. They are **not** empirical claims about real MLB
+> marketing.
 
-| Scenario | Paid Social | Email | Broadcast | OOH | Projected Lift |
-|---|---|---|---|---|---|
-| Baseline | 25% | 5% | 45% | 25% | — |
-| Optimized | 35% | 15% | 27% | 23% | +11.4% |
+- Under the modeled efficiencies, **email and paid social** show the highest
+  marginal response per dollar, while **broadcast** has the longest carry-over
+  (adstock decay ≈ 0.7, ~6-8 week memory) but the lowest marginal return.
+- A budget optimizer (constrained `scipy` SLSQP under diminishing returns)
+  reallocates away from broadcast toward the more efficient channels, consistent
+  with the baseline being over-weighted on broadcast (45%).
 
-At mean attendance of 26,572 and an average ticket price of $35, an 11.4% lift
-across 81 home games represents approximately **$3.2M in incntal gate
-revenue** per season per team.
+| Scenario | Paid Social | Email | Broadcast | OOH |
+|---|---|---|---|---|
+| Baseline | 25% | 5% | 45% | 25% |
+| Optimizer-recommended | shifts toward paid social / email | up to cap | down | down |
+
+The interactive Scenario Planner in the dashboard reports the projected
+attendance lift and incremental gate revenue for any chosen allocation.
+
+---
+
+## Validation
+
+Reported fit comes from a **time-based holdout**: trained on 2019/2021-2023 and
+evaluated on the held-out 2024 season (generated reproducibly via
+`python -m backend.models.validate`).
+
+- Holdout R² (2024): **0.33**
+- Holdout MAPE: **23.9%**
+- Convergence: max R-hat 1.01, 0 divergences
+
+These are honest out-of-sample numbers. Attendance is genuinely noisy at the
+game level (weather, opponent, local events), so a mid-range R² is expected for
+a parsimonious, interpretable model — the value here is decomposition and
+inference, not point-prediction accuracy.
 
 ---
 
 ## Limitations and Next Steps
 
 **Synthetic spend data.** Marketing channel spend was generated as a proxy
-calibrated to industry benchmarks. Real spend data from a team's media planning
-system would sharpen channel-level estimates considerably.
+calibrated to industry benchmarks. Real spend data from a team's media-planning
+system would make the channel-level estimates empirical rather than illustrative.
 
 **No weather data.** Temperature and precipitation are known attendance drivers
-that were excluded due to data collection scope. Adding NOAA daily weather
-would likely improve model fit and reduce residual variance.
+excluded due to data-collection scope. Adding NOAA daily weather would likely
+improve fit and reduce residual variance.
 
-**Promo night identification.** Promotional events (bobblehead nights, giveaways)
-were approximated probabilistically. A complete promo calendar from a team's
-CRM would allow precise identification of promo effects by type.
+**Promo-night identification.** Promotional events were approximated
+probabilistically. A complete promo calendar would allow precise identification
+of promo effects by type.
 
-**Single-team application.** The current model pools across all 30 teams. A
-team-specific model with more granular local marketing data would produce
-actionable budget guidance for a specific franchise rather than league-wide
-estimates.
+**League-wide pooling.** The current model partially pools across all 30 teams.
+A team-specific model with granular local marketing data would produce
+actionable budget guidance for a specific franchise.
 
 ---
 
 ## Technical Notes
 
-- Model fit: PyMC 6.0, NUTS sampler, 2 chains x 1,000 draws, 2,000 tuning steps
-- Convergence: 0 divergences, max R-hat 1.005, min ESS bulk 800+
-- Holdout R² (2024 season): 0.81
-- MAPE: 8.3%
+- Production model: PyMC, NUTS sampler, 2 chains x 1,000 draws, 2,000 tuning steps
+- Convergence (production): 0 divergences, max R-hat 1.005
+- Holdout (2024): R² 0.33, MAPE 23.9%, max R-hat 1.01, 0 divergences
 - Code and data pipeline: github.com/hrithikda/fanpulse
